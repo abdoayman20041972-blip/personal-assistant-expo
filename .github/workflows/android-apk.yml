@@ -1,0 +1,66 @@
+name: Android Release APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, fix/android-release]
+    paths:
+      - 'personal-assistant-expo/**'
+      - '.github/workflows/android-apk.yml'
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: personal-assistant-expo
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: personal-assistant-expo/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: EAS Build (preview APK)
+        id: build
+        run: |
+          eas build --platform android --profile preview --non-interactive --wait --json > build-result.json
+          cat build-result.json
+          # Extract artifact URL
+          ARTIFACT_URL=$(node -e "const r=require('./build-result.json'); console.log(r[0]?.artifacts?.buildUrl || r.artifacts?.buildUrl || '')")
+          echo "artifact_url=$ARTIFACT_URL" >> $GITHUB_OUTPUT
+          echo "Build artifact: $ARTIFACT_URL"
+
+      - name: Download APK
+        if: steps.build.outputs.artifact_url != ''
+        run: |
+          curl -L -o app-release.apk "${{ steps.build.outputs.artifact_url }}"
+          ls -lh app-release.apk
+          file app-release.apk || true
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: personal-assistant-release-apk
+          path: personal-assistant-expo/app-release.apk
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Summary
+        run: |
+          echo "### Android APK Build" >> $GITHUB_STEP_SUMMARY
+          echo "- Profile: preview (release APK)" >> $GITHUB_STEP_SUMMARY
+          echo "- Artifact: ${{ steps.build.outputs.artifact_url }}" >> $GITHUB_STEP_SUMMARY
